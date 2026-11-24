@@ -9,17 +9,32 @@ const ACCESS_KEY = process.env.LSQ_ACCESS_KEY;
 const SECRET_KEY = process.env.LSQ_SECRET_KEY;
 const LSQ_HOST = 'https://api-us11.leadsquared.com';
 
-const FIELDS = [
-  'mx_AI_Readiness_Score','mx_Readiness_Bucket','mx_AI_Detected_Intent','mx_AI_Reasoning',
+// Agent output fields. hasMxData() checks ONLY these, so a GetById response that
+// carries profile fields but omits agent fields still falls through to Search.
+const AGENT_FIELDS = [
+  // Flash
+  'mx_AI_Readiness_Score','mx_Readiness_Bucket','mx_AI_Detected_Intent','mx_AI_Reasoning','mx_AI_Decision_Timestamp',
+  'mx_Flash_Urgency_Type','mx_Flash_Urgency_Line','mx_Flash_Urgency_Date',
+  // Sherlock
   'mx_QA_Status','mx_QA_Risk_Level','mx_QA_Summary','mx_QA_Key_Findings','mx_QA_Advisory_Notes','mx_QA_Concerns',
+  // Hawke
   'mx_AI_Anomaly_Status','mx_Latest_Anomaly_Type','mx_Latest_Anomaly_Severity','mx_Latest_Anomaly_Confidence',
   'mx_Last_Intelligence_Run','mx_Latest_Anomaly_Explanation',
+  // Invorto
   'mx_Primary_Hesitation','mx_Motivation_Trigger','mx_Decision_Owner','mx_Enrollment_Timeline_Voice_Call'
 ];
 
+// Student profile fields the Flash card displays alongside the agent output.
+const PROFILE_FIELDS = [
+  'mx_Program_Interest','mx_Engagement_Readiness','mx_Enrollment_Timeline','mx_Campus',
+  'mx_Zip','mx_Student_Inquiry','Source'
+];
+
+const FIELDS = [...AGENT_FIELDS, ...PROFILE_FIELDS];
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
-// Helper: extract mx_ fields from a lead object
+// Helper: extract the fields above from a lead object
 function extractFields(lead) {
   const result = {};
   FIELDS.forEach(f => {
@@ -29,9 +44,9 @@ function extractFields(lead) {
   return result;
 }
 
-// Helper: check if any mx_ fields actually have values
+// Helper: check if any agent output fields actually have values
 function hasMxData(lead) {
-  return lead && FIELDS.some(f => lead[f] !== undefined && lead[f] !== null && lead[f] !== '');
+  return lead && AGENT_FIELDS.some(f => lead[f] !== undefined && lead[f] !== null && lead[f] !== '');
 }
 
 app.get('/lead-intelligence', async (req, res) => {
@@ -55,7 +70,7 @@ app.get('/lead-intelligence', async (req, res) => {
 
     } else {
       // ── ProspectID lookup ─────────────────────────────────────────────────
-      // Strategy 1: Leads.GetById — fast but sometimes omits mx_ custom fields
+      // Strategy 1: Leads.GetById, fast but sometimes omits mx_ custom fields
       const url1 = `${LSQ_HOST}/v2/LeadManagement.svc/Leads.GetById` +
         `?accessKey=${ACCESS_KEY}&secretKey=${SECRET_KEY}&id=${encodeURIComponent(pid)}`;
       console.log('Strategy 1 – GetById:', url1.replace(SECRET_KEY, '***'));
@@ -68,13 +83,13 @@ app.get('/lead-intelligence', async (req, res) => {
         const candidate = Array.isArray(d1) ? d1[0] : d1;
         if (hasMxData(candidate)) {
           lead = candidate;
-          console.log('mx_ fields found via GetById ✓');
+          console.log('Agent fields found via GetById');
         } else {
-          console.log('GetById returned no mx_ fields — trying Search fallback...');
+          console.log('GetById returned no agent fields, trying Search fallback...');
         }
       }
 
-      // Strategy 2: Leads.Search by ProspectID — returns full field set including mx_
+      // Strategy 2: Leads.Search by ProspectID, returns the requested columns
       if (!lead || !hasMxData(lead)) {
         const searchUrl = `${LSQ_HOST}/v2/LeadManagement.svc/Leads.Search` +
           `?accessKey=${ACCESS_KEY}&secretKey=${SECRET_KEY}`;
@@ -125,7 +140,7 @@ app.get('/lead-intelligence', async (req, res) => {
     const result = extractFields(lead);
     console.log('Returning result:', JSON.stringify(result).substring(0, 300));
 
-    // Return fields FLAT at top level — frontend reads d.mx_AI_Readiness_Score directly
+    // Return fields FLAT at top level; frontend reads d.mx_AI_Readiness_Score directly
     res.json(result);
 
   } catch (err) {
